@@ -170,11 +170,21 @@ const compareJsons = async () => {
     
     // Get comparison results
     const response = await axios.get('http://localhost:8000/api/compare')
+    console.log('Differences received:', JSON.stringify(response.data.differences, null, 2))
+    
     differences.value = response.data.differences
     
     // Parse and store the JSONs for display
-    parsedFirstJson.value = JSON.parse(firstJson.value)
-    parsedSecondJson.value = JSON.parse(secondJson.value)
+    try {
+      parsedFirstJson.value = JSON.parse(firstJson.value)
+      parsedSecondJson.value = JSON.parse(secondJson.value)
+      console.log('Parsed first JSON:', parsedFirstJson.value)
+      console.log('Parsed second JSON:', parsedSecondJson.value)
+    } catch (parseError) {
+      console.error('Error parsing JSON:', parseError)
+      error.value = 'Invalid JSON format'
+      return
+    }
   } catch (err) {
     console.error('Error:', err)
     error.value = err.response?.data?.message || 'An error occurred while comparing the JSONs'
@@ -184,47 +194,74 @@ const compareJsons = async () => {
 }
 
 const highlightJson = (json, differences, side) => {
-  let jsonString = JSON.stringify(json, null, 2);
+  // Create a deep copy to avoid modifying the original
+  const jsonCopy = JSON.parse(JSON.stringify(json))
   
-  // Escape HTML characters
-  jsonString = jsonString
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  
-  // For each difference, wrap the different values in colored spans
+  // Process each difference
   differences.forEach(diff => {
-    const color = side === 'left' ? '#86efac' : '#93c5fd'; // Green for left, blue for right
+    const pathParts = diff.path.split('.')
+    let current = jsonCopy
+    
+    // Navigate to the parent object
+    for (let i = 0; i < pathParts.length - 1; i++) {
+      if (current[pathParts[i]] === undefined) return
+      current = current[pathParts[i]]
+    }
+    
+    const lastKey = pathParts[pathParts.length - 1]
+    if (current[lastKey] === undefined) return
+    
+    // Get the value to display based on the difference type
+    let value
+    let color
     
     if (diff.type === 'value_mismatch') {
-      // Handle array value differences
-      if (diff.path.includes('.')) {
-        const value = side === 'left' ? diff.value1 : diff.value2;
-        const escapedValue = String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        
-        // Only highlight the content between quotes
-        jsonString = jsonString.replace(
-          new RegExp(`"(${escapedValue})"`, 'g'),
-          (_, content) => `"<span style="background-color: ${color}">${content}</span>"`
-        );
-      }
-    } else if (diff.type === 'missing_in_second' && side === 'left') {
-      // For left side, highlight only the property name content between quotes
-      const escapedPropertyName = diff.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      jsonString = jsonString.replace(
-        new RegExp(`"(${escapedPropertyName})"(?=:)`, 'g'),
-        (_, content) => `"<span style="background-color: ${color}">${content}</span>"`
-      );
-    } else if (diff.type === 'missing_in_first' && side === 'right') {
-      // For right side, highlight only the property name content between quotes
-      const escapedPropertyName = diff.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      jsonString = jsonString.replace(
-        new RegExp(`"(${escapedPropertyName})"(?=:)`, 'g'),
-        (_, content) => `"<span style="background-color: ${color}">${content}</span>"`
-      );
+      value = side === 'left' ? diff.value1 : diff.value2
+      color = side === 'left' ? '#86efac' : '#93c5fd'
+    } else if (
+      (diff.type === 'missing_in_second' && side === 'left') ||
+      (diff.type === 'missing_in_first' && side === 'right')
+    ) {
+      value = diff.value
+      color = side === 'left' ? '#86efac' : '#93c5fd'
+    } else {
+      return
     }
-  });
+    
+    // Replace the value with a highlighted version
+    current[lastKey] = {
+      __isHighlighted: true,
+      value: value,
+      color: color
+    }
+  })
   
-  return jsonString;
+  // Custom replacer function for JSON.stringify
+  const replacer = (key, value) => {
+    if (value && typeof value === 'object' && value.__isHighlighted) {
+      // Create a special marker that won't be escaped
+      return `__HIGHLIGHT_START__${value.color}__${JSON.stringify(value.value)}__HIGHLIGHT_END__`
+    }
+    return value
+  }
+  
+  // Convert to string with our special markers
+  let result = JSON.stringify(jsonCopy, replacer, 2)
+  
+  // First escape HTML characters
+  result = result
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  
+  // Then replace our markers with actual HTML
+  result = result
+    .replace(/__HIGHLIGHT_START__([^_]+)__([^_]+)__HIGHLIGHT_END__/g, (_, color, content) => {
+      // Remove the quotes that JSON.stringify adds around strings
+      content = content.replace(/^"|"$/g, '')
+      return `<span style="background-color: ${color}">${content}</span>`
+    })
+  
+  return result
 }
 </script> 
