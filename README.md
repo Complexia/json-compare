@@ -84,6 +84,12 @@ Try these sample JSONs to test the comparison:
 }
 ```
 
+To test:
+
+```bash
+php artisan test tests/Feature/JsonCompareTest.php --testdox
+```
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
